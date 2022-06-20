@@ -45,7 +45,7 @@ function resolveDefinition(definition, definitionType, params = []) {
         flatMap(definition.overrides, asistantMap)
         asistantMapType[definitionType] = asistantMap;
     }
-    console.log(asistantMap)
+    // console.log(asistantMap)
 
     const modifiedParams = []
     params.forEach(param => {
@@ -66,7 +66,9 @@ function resolveDefinition(definition, definitionType, params = []) {
 
         constructContext(definition.overrides, context)
         resolveDefaultValue(asistantMap, definition, context)
-        // resolveMinMax(asistantMap, definition, context)
+
+        constructContext(definition.overrides, context)
+        resolveMinMax(asistantMap, definition, context)
     }
     // 生成map平展开属性
     // 按序查询params中的父子属性，并调整顺序，优先父属性
@@ -99,20 +101,26 @@ function resolveAffect(asistantMap, definition, context) {
 }
 
 function resolveDefaultValue(asistantMap, definition, context) {
-    for (const [key, value] of asistantMap) {
-        if (typeof value.default_value === 'string') {
-            const calcValue = eval(`
-                (function calcAffects() {
-                    with(context) {
-                        return (${value.default_value})
-                    }
-                })()
-            `);
+    for (const [key, value] of Object.entries(context)) {
+        if (typeof value === 'string') {
+            let calcValue
+            try {
+                calcValue = eval(`
+                    (function calcAffects() {
+                        with(context) {
+                            return (${value})
+                        }
+                    })()
+                `);
+            } catch (e) {
+                // console.log(e)
+            }
+            // console.log(value, calcValue, context)
             // console.log(asistantMap.get(keyName).path, calcValue)
             if (typeof calcValue !== 'undefined') {
                 // console.log
                 (eval(`
-                    (definition.overrides.${value.path}.default_value = ${calcValue})
+                    (definition.overrides.${asistantMap.get(key).path}.default_value = ${calcValue})
                 `));
             }
         }
@@ -120,11 +128,41 @@ function resolveDefaultValue(asistantMap, definition, context) {
 }
 
 function resolveMinMax(asistantMap, definition, context) {
-    if (typeof value.minimum_value === 'string') {
-        
-    }
-    if (typeof value.maximum_value === 'string') {
-        
+    console.log(context)
+    for (const [key, value] of asistantMap) {
+        try {
+            const calcMinValue = eval(`
+            (function calcAffects() {
+                with(context) {
+                    return eval(definition.overrides.${asistantMap.get(key).path}.minimum_value)
+                }
+            })()
+            `);
+            const calcMaxValue = eval(`
+            (function calcAffects() {
+                with(context) {
+                    return eval(definition.overrides.${asistantMap.get(key).path}.maximum_value)
+                }
+            })()
+            `);
+            console.log(calcMinValue, calcMaxValue)
+            if (typeof calcMinValue !== 'undefined' && typeof calcMaxValue !== 'undefined') {
+                let calcDefaultValue = context[key];
+                if (calcDefaultValue < calcMinValue) {
+                    // console.log('<-', key, calcDefaultValue, calcMinValue)
+                    calcDefaultValue = calcMinValue
+                }
+                if (calcDefaultValue > calcMaxValue) {
+                    // console.log('->', key, calcDefaultValue, calcMaxValue)
+                    calcDefaultValue = calcMaxValue
+                }
+                (eval(`
+                    (definition.overrides.${asistantMap.get(key).path}.default_value = ${calcDefaultValue})
+                `));
+            }
+        } catch (e) {
+            console.log(e.message)
+        }
     }
 }
 
