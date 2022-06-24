@@ -11,7 +11,11 @@ describe('allparams', () => {
         // definitionCopy.overrides.material_print_temperature.default_value = 10
         // definitionCopy.overrides.retraction_enable.children.retraction_speed.default_value = 20
         definitionCopy.overrides.cool_fan_speed.children.cool_fan_speed_max.default_value = 430
-        const st = Date.now()
+        let st = Date.now()
+        resolveDefinition(definitionCopy)
+        console.log((Date.now() - st) / 1000)
+
+        st = Date.now()
         resolveDefinition(definitionCopy)
         console.log((Date.now() - st) / 1000)
         // console.log(definitionCopy)

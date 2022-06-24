@@ -1,6 +1,7 @@
 const _ = require('lodash')
 
 const asistantMapType = []
+const asistantArrayType = []
 let id = 0;
 
 function constructContext(obj, context) {
@@ -16,38 +17,43 @@ function constructContext(obj, context) {
     }
 }
 
-function flatMap(obj, asistantMap, parentObj, parentKey) {
+function flatMap(obj, asistantMap, asistantArray, parentObj, parentKey) {
     for (const key in obj) {
         const value = obj[key];
         if (typeof value.affect !== 'undefined') {
             // console.log(key)
-            asistantMap.set(key, {
-                id: id++,
+            asistantArray[id] = {
+                id: id,
                 parent: parentKey,
                 path: parentKey ? `${parentKey}.children.${key}` : `${key}`,
                 affect: _.cloneDeep(value.affect)
-            })
+            }; 
+            asistantMap.set(key, asistantArray[id]);
+            id++;
         }
         if (value.children) {
-            flatMap(value.children, asistantMap, value, asistantMap.get(key).path)
+            flatMap(value.children, asistantMap, asistantArray, value, asistantMap.get(key).path);
         }
     }
 }
 
 function resolveDefinition(definition, definitionType, params = []) {
     // 判断父节点，更新deifnition中的值
-    let asistantMap;
-    if (asistantMapType[definitionType]) {
+    let asistantMap, asistantArray = [];
+    if (asistantMapType[definitionType] && asistantArrayType[definitionType]) {
         asistantMap = asistantMapType[definitionType];
+        asistantArray = asistantArrayType[definitionType];
     } else {
         asistantMap = new Map()
         id = 0
-        flatMap(definition.overrides, asistantMap)
+        flatMap(definition.overrides, asistantMap, asistantArray)
         asistantMapType[definitionType] = asistantMap;
+        asistantArrayType[definitionType] = asistantArray;
     }
     // console.log(asistantMap)
 
     const modifiedParams = []
+    // 按顺序调整待修改的配置值
     params.forEach(param => {
         const [key] = param;
         const id = asistantMap.get(key).id
@@ -56,18 +62,33 @@ function resolveDefinition(definition, definitionType, params = []) {
 
 
     const context = {}
-    
     if (modifiedParams.length > 0) {
+        // 根据传入值计算依赖值
+        constructContext(definition.overrides, context)
+        for (let i = 0; i < modifiedParams.length; i++) {
+            const [pKey, pValue] = modifiedParams[i];
+            eval(`(definition.overrides.${asistantMap.get(pKey).path}.default_value = ${pValue})`);
+            context[pKey] = pValue;
+            resolveAffectByDefinitionItem(asistantMap, definition, context, asistantMap.get(pKey));
+        }
+        // 规范最大最小值
+        for (let i = 0; i < modifiedParams.length; i++) {
+            const [pKey, pValue] = modifiedParams[i];
+            eval(`(definition.overrides.${asistantMap.get(pKey).path}.default_value = ${pValue})`);
+            context[pKey] = pValue;
+            resolveAffectByDefinitionItem(asistantMap, definition, context, asistantMap.get(pKey));
+        }
         // 检测父子关系是否依旧匹配
     } else {
+        // 直接计算当前配置文件的affect和相关计数值
         // console.log(context)
         constructContext(definition.overrides, context)
         resolveAffect(asistantMap, definition, context)
 
-        constructContext(definition.overrides, context)
+        // constructContext(definition.overrides, context)
         resolveDefaultValue(asistantMap, definition, context)
 
-        constructContext(definition.overrides, context)
+        // constructContext(definition.overrides, context)
         resolveMinMax(asistantMap, definition, context)
     }
     // 生成map平展开属性
@@ -79,22 +100,25 @@ function resolveDefinition(definition, definitionType, params = []) {
 function resolveAffect(asistantMap, definition, context) {
     for (const [key, value] of asistantMap) {
         // 先计算affect，然后计算default_value的计算值，最后min/max
-        if (value.affect) {
-            for (const keyName in value.affect) {
-                const calcValue = eval(`
-                (function calcAffects() {
-                    with(context) {
-                        return (${value.affect[keyName]})
-                    }
-                })()
-                `);
-                // console.log(asistantMap.get(keyName).path, calcValue)
-                if (typeof calcValue !== 'undefined') {
-                    // console.log
-                    (eval(`
-                        (definition.overrides.${asistantMap.get(keyName).path}.default_value = ${calcValue})
-                    `));
+        resolveAffectByDefinitionItem(asistantMap, definition, context, value);
+    }
+}
+
+function resolveAffectByDefinitionItem(asistantMap, definition, context, definitionItem) {
+    if (definitionItem.affect) {
+        for (const keyName in definitionItem.affect) {
+            const calcValue = eval(`
+            (function calcAffects() {
+                with(context) {
+                    return (${definitionItem.affect[keyName]})
                 }
+            })()
+            `);
+            // console.log(asistantMap.get(keyName).path, calcValue)
+            if (typeof calcValue !== 'undefined') {
+                // console.log
+                (eval(`(definition.overrides.${asistantMap.get(keyName).path}.default_value = ${calcValue})`));
+                context[keyName] = calcValue;
             }
         }
     }
@@ -106,7 +130,7 @@ function resolveDefaultValue(asistantMap, definition, context) {
             let calcValue
             try {
                 calcValue = eval(`
-                    (function calcAffects() {
+                    (function calcDefaultValue() {
                         with(context) {
                             return (${value})
                         }
@@ -119,33 +143,32 @@ function resolveDefaultValue(asistantMap, definition, context) {
             // console.log(asistantMap.get(keyName).path, calcValue)
             if (typeof calcValue !== 'undefined') {
                 // console.log
-                (eval(`
-                    (definition.overrides.${asistantMap.get(key).path}.default_value = ${calcValue})
-                `));
+                (eval(`(definition.overrides.${asistantMap.get(key).path}.default_value = ${calcValue})`));
+                context[key] = calcValue;
             }
         }
     }
 }
 
 function resolveMinMax(asistantMap, definition, context) {
-    console.log(context)
+    // console.log(context)
     for (const [key, value] of asistantMap) {
         try {
             const calcMinValue = eval(`
-            (function calcAffects() {
+            (function calcMin() {
                 with(context) {
                     return eval(definition.overrides.${asistantMap.get(key).path}.minimum_value)
                 }
             })()
             `);
             const calcMaxValue = eval(`
-            (function calcAffects() {
+            (function calcMax() {
                 with(context) {
                     return eval(definition.overrides.${asistantMap.get(key).path}.maximum_value)
                 }
             })()
             `);
-            console.log(calcMinValue, calcMaxValue)
+            // console.log(calcMinValue, calcMaxValue)
             if (typeof calcMinValue !== 'undefined' && typeof calcMaxValue !== 'undefined') {
                 let calcDefaultValue = context[key];
                 if (calcDefaultValue < calcMinValue) {
@@ -156,11 +179,11 @@ function resolveMinMax(asistantMap, definition, context) {
                     // console.log('->', key, calcDefaultValue, calcMaxValue)
                     calcDefaultValue = calcMaxValue
                 }
-                (eval(`
-                    (definition.overrides.${asistantMap.get(key).path}.default_value = ${calcDefaultValue})
-                `));
+                (eval(`(definition.overrides.${asistantMap.get(key).path}.default_value = ${calcDefaultValue})`));
+                context[key] = calcDefaultValue;
             }
         } catch (e) {
+            // 参数未找到
             console.log(e.message)
         }
     }
