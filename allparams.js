@@ -52,33 +52,64 @@ function resolveDefinition(definition, definitionType, params = []) {
     }
     // console.log(asistantMap)
 
-    const modifiedParams = []
+    const modifiedParams = [];
     // 按顺序调整待修改的配置值
     params.forEach(param => {
         const [key] = param;
-        const id = asistantMap.get(key).id
-        modifiedParams[id] = param
-    })
-
+        const id = asistantMap.get(key).id;
+        modifiedParams.push([id, ...param]);
+    });
+    modifiedParams.sort((a, b) => a[0] - b[0]);
+    // console.log(modifiedParams)
 
     const context = {}
     if (modifiedParams.length > 0) {
         // 根据传入值计算依赖值
         constructContext(definition.overrides, context)
         for (let i = 0; i < modifiedParams.length; i++) {
-            const [pKey, pValue] = modifiedParams[i];
-            eval(`(definition.overrides.${asistantMap.get(pKey).path}.default_value = ${pValue})`);
+            const [id, pKey, pValue] = modifiedParams[i];
+            // console.log(id, pKey, pValue)
+            eval(`(
+                definition.overrides.${asistantMap.get(pKey).path}.default_value = ${typeof pValue === 'string' ? 'pValue' : pValue}
+            )`);
             context[pKey] = pValue;
             resolveAffectByDefinitionItem(asistantMap, definition, context, asistantMap.get(pKey));
         }
         // 规范最大最小值
         for (let i = 0; i < modifiedParams.length; i++) {
-            const [pKey, pValue] = modifiedParams[i];
-            eval(`(definition.overrides.${asistantMap.get(pKey).path}.default_value = ${pValue})`);
-            context[pKey] = pValue;
-            resolveAffectByDefinitionItem(asistantMap, definition, context, asistantMap.get(pKey));
+            const [id, pKey] = modifiedParams[i];
+            resolveMinMaxByDefinitionItem(asistantMap, definition, context, asistantMap.get(pKey), pKey);
         }
         // 检测父子关系是否依旧匹配
+        for (const [key, value] of asistantMap) {
+            const definitionItem = value;
+            for (const keyName in definitionItem.affect) {
+                const calcValue = eval(`
+                (function calcAffects() {
+                    with(context) {
+                        return (${definitionItem.affect[keyName]})
+                    }
+                })()
+                `);
+                // console.log(asistantMap.get(keyName).path, calcValue)
+                switch (typeof calcValue) {
+                    case 'number': {
+                        // console.log(eval(`(definition.overrides.${asistantMap.get(keyName).path}.default_value)`), calcValue)
+                        eval(`(
+                            definition.overrides.${asistantMap.get(keyName).path}.mismatch = Math.abs(definition.overrides.${asistantMap.get(keyName).path}.default_value - ${calcValue}) > 1e-6
+                        )`);
+                        break;
+                    }
+                    case 'boolean':
+                    case 'string': {
+                        eval(`(
+                            definition.overrides.${asistantMap.get(keyName).path}.mismatch = (definition.overrides.${asistantMap.get(keyName).path}.default_value !== ${calcValue})
+                        )`);
+                        break;
+                    }
+                }
+            }
+        }
     } else {
         // 直接计算当前配置文件的affect和相关计数值
         // console.log(context)
@@ -153,39 +184,42 @@ function resolveDefaultValue(asistantMap, definition, context) {
 function resolveMinMax(asistantMap, definition, context) {
     // console.log(context)
     for (const [key, value] of asistantMap) {
-        try {
-            const calcMinValue = eval(`
-            (function calcMin() {
-                with(context) {
-                    return eval(definition.overrides.${asistantMap.get(key).path}.minimum_value)
-                }
-            })()
-            `);
-            const calcMaxValue = eval(`
-            (function calcMax() {
-                with(context) {
-                    return eval(definition.overrides.${asistantMap.get(key).path}.maximum_value)
-                }
-            })()
-            `);
-            // console.log(calcMinValue, calcMaxValue)
-            if (typeof calcMinValue !== 'undefined' && typeof calcMaxValue !== 'undefined') {
-                let calcDefaultValue = context[key];
-                if (calcDefaultValue < calcMinValue) {
-                    // console.log('<-', key, calcDefaultValue, calcMinValue)
-                    calcDefaultValue = calcMinValue
-                }
-                if (calcDefaultValue > calcMaxValue) {
-                    // console.log('->', key, calcDefaultValue, calcMaxValue)
-                    calcDefaultValue = calcMaxValue
-                }
-                (eval(`(definition.overrides.${asistantMap.get(key).path}.default_value = ${calcDefaultValue})`));
-                context[key] = calcDefaultValue;
+        resolveMinMaxByDefinitionItem(asistantMap, definition, context, value, key);
+    }
+}
+function resolveMinMaxByDefinitionItem(asistantMap, definition, context, definitionItem, key) {
+    try {
+        const calcMinValue = eval(`
+        (function calcMin() {
+            with(context) {
+                return eval(definition.overrides.${definitionItem.path}.minimum_value)
             }
-        } catch (e) {
-            // 参数未找到
-            console.log(e.message)
+        })()
+        `);
+        const calcMaxValue = eval(`
+        (function calcMax() {
+            with(context) {
+                return eval(definition.overrides.${definitionItem.path}.maximum_value)
+            }
+        })()
+        `);
+        // console.log(calcMinValue, calcMaxValue)
+        if (typeof calcMinValue !== 'undefined' && typeof calcMaxValue !== 'undefined') {
+            let calcDefaultValue = context[key];
+            if (calcDefaultValue < calcMinValue) {
+                // console.log('<-', key, calcDefaultValue, calcMinValue)
+                calcDefaultValue = calcMinValue
+            }
+            if (calcDefaultValue > calcMaxValue) {
+                // console.log('->', key, calcDefaultValue, calcMaxValue)
+                calcDefaultValue = calcMaxValue
+            }
+            (eval(`(definition.overrides.${definitionItem.path}.default_value = ${calcDefaultValue})`));
+            context[key] = calcDefaultValue;
         }
+    } catch (e) {
+        // 参数未找到
+        console.log(e.message)
     }
 }
 
