@@ -2,11 +2,16 @@ const assert = require('assert')
 const fs = require('fs')
 const _ = require('lodash')
 const path = require('path')
-const { resolveDefinition } = require('./allparams')
+const { resolveDefinition, sortParams } = require('./allparams')
 
 describe('allparams', () => {
+    let definition = {}
+
+    beforeEach(() => {
+        definition = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'quality.settings.json')))
+    })
+
     it('given a material.def.json without params should calculate all the affects', () => {
-        const definition = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'material0.pla.0614-1.def.json')))
         const definitionCopy = _.cloneDeep(definition)
         // definitionCopy.overrides.material_print_temperature.default_value = 10
         // definitionCopy.overrides.retraction_enable.children.retraction_speed.default_value = 20
@@ -19,13 +24,12 @@ describe('allparams', () => {
     })
 
     it.only('given a material.def.json with input params should calculate by params', () => {
-        const definition = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'material0.pla.0614-1.def.json')))
         const definitionCopy = _.cloneDeep(definition)
         
         let st = Date.now()
-        resolveDefinition(definitionCopy, 1, [
+        resolveDefinition(definitionCopy, [
             ['color', '#ff0000'],
-            ['material_initial_print_temperature', 10],
+            ['material_initial_print_temperature', -310],
             ['wall_0_material_flow', 20],
             ['cool_fan_speed_max', 430]
         ])
